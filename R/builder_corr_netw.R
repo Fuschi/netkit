@@ -60,8 +60,8 @@ correlate_matrix <- function(
     return(list(cor = cor_mat, p = NULL))
   }
   
-  # cor_p mode — use cor.test() for each pair
-  pairs <- combn(seq_along(v_use), 2, simplify = FALSE)
+  # cor_p mode - use cor.test() for each pair
+  pairs <- utils::combn(seq_along(v_use), 2, simplify = FALSE)
   
   for (idx in pairs) {
     vi <- v_use[idx[1]]; vj <- v_use[idx[2]]
@@ -100,7 +100,7 @@ correlate_matrix <- function(
 #' Build an adjacency matrix by applying a minimum absolute correlation cutoff.
 #'
 #' @param cor_mat Correlation matrix (numeric, symmetric).
-#' @param min_cor Minimum absolute correlation to include as an edge. Must be in [0, 1].
+#' @param min_cor Minimum absolute correlation to include as an edge. Must be in \[0, 1\].
 #'
 #' @return Numeric symmetric adjacency matrix. Weights retain the (signed) correlation
 #' wherever |r| >= min_cor; zeros elsewhere. Diagonal is set to 0.
@@ -126,7 +126,7 @@ threshold_absolute <- function(cor_mat, min_cor) {
 #' Keep the largest absolute correlations until the desired undirected edge density is reached.
 #'
 #' @param cor_mat Correlation matrix (numeric, symmetric).
-#' @param density Target density in (0, 1]. For p nodes, the number of edges is approximately
+#' @param density Target density in (0, 1\]. For p nodes, the number of edges is approximately
 #'   \code{density * p*(p - 1)/2}.
 #'
 #' @return Numeric symmetric adjacency matrix with retained correlations as weights.
@@ -258,25 +258,45 @@ adjacency_to_graph <- function(adj, weighted = TRUE) {
 # =========================
 
 #' @title Build a correlation network in one call
+#'
 #' @description
-#' High-level wrapper for computing correlations, thresholding, and graph conversion.
-#' Internally calls \code{correlate_matrix()}, \code{threshold_*()}, and \code{adjacency_to_graph()}.
-#' Designed to simplify workflows or plug into packages like \code{set_omic()}.
+#' High-level wrapper to construct a correlation-based network by computing pairwise correlations,
+#' applying a thresholding strategy, and converting the resulting matrix into a graph.
+#' Internally calls \code{\link{correlate_matrix}}, \code{\link{threshold_absolute}},
+#' \code{\link{threshold_density}}, or \code{\link{threshold_pvalue}}, and finally \code{\link{adjacency_to_graph}}.
+#' Designed for easy integration in workflows or use in functions like \code{set_omic()}.
 #'
-#' @param x Numeric matrix or data.frame with **columns = variables** (features/taxa) and rows = samples.
-#' @param cor_method \code{"pearson"}, \code{"spearman"}, or \code{"kendall"}.
-#' @param thresh_method \code{"absolute"}, \code{"density"}, or \code{"p-value"}.
-#' @param thresh_value Numeric threshold depending on \code{thresh_method}:
+#' @param x A numeric matrix or data frame with samples in rows and variables (features/taxa) in columns.
+#' @param cor_method A character string specifying the correlation method:
+#'   one of \code{"pearson"}, \code{"spearman"}, or \code{"kendall"}.
+#' @param thresh_method Thresholding method to apply:
+#'   one of \code{"absolute"}, \code{"density"}, or \code{"p-value"}.
+#' @param thresh_value A numeric threshold value, interpreted depending on \code{thresh_method}:
 #'   \itemize{
-#'     \item \code{"absolute"}: minimum absolute correlation in [0, 1]
-#'     \item \code{"density"}: target edge density in (0, 1]
-#'     \item \code{"p-value"}: alpha significance level in (0, 1]
+#'     \item \code{"absolute"}: minimum absolute correlation, \eqn{\in [0, 1]}
+#'     \item \code{"density"}: target edge density, \eqn{\in (0, 1]}
+#'     \item \code{"p-value"}: significance level (alpha), \eqn{\in (0, 1]}
 #'   }
-#' @param adjust P-value correction method for \code{"p-value"}: \code{"none"}, \code{"holm"},
-#'   \code{"hochberg"}, \code{"hommel"}, \code{"bonferroni"}, \code{"BH"}, \code{"BY"}, or \code{"fdr"}.
-#' @param output One of \code{"graph"}, \code{"adjacency"}, or \code{"both"}.
+#' @param adjust Character string indicating the p-value adjustment method
+#'   (only used when \code{thresh_method = "p-value"}).
+#'   One of: \code{"none"}, \code{"holm"}, \code{"hochberg"}, \code{"hommel"},
+#'   \code{"bonferroni"}, \code{"BH"}, \code{"BY"}, or \code{"fdr"}.
+#' @param output A character string specifying the output type:
+#'   one of \code{"graph"}, \code{"adjacency"}, or \code{"both"}.
 #'
-#' @return Depending on \code{output}: an \code{igraph} object, an adjacency matrix, or a list with both.
+#' @return
+#' Depending on \code{output}:
+#' \itemize{
+#'   \item If \code{"graph"}: returns an \code{igraph} object.
+#'   \item If \code{"adjacency"}: returns a numeric adjacency matrix.
+#'   \item If \code{"both"}: returns a list with elements \code{adjacency} and \code{graph}.
+#' }
+#'
+#' @seealso
+#' \code{\link{correlate_matrix}}, \code{\link{threshold_absolute}},
+#' \code{\link{threshold_density}}, \code{\link{threshold_pvalue}},
+#' \code{\link{adjacency_to_graph}}
+#'
 #' @export
 build_corr_net <- function(x,
                            cor_method    = c("pearson", "spearman", "kendall"),
@@ -296,7 +316,7 @@ build_corr_net <- function(x,
   if (!is.numeric(x)) cli::cli_abort("{.arg x} must be a numeric matrix or data.frame.")
   if (is.null(colnames(x))) cli::cli_abort("{.arg x} must have column names (variables/features).")
   if (missing(thresh_value))
-    cli::cli_abort("{.arg thresh_value} is required: absolute ∈ [0,1], density ∈ (0,1], p-value ∈ (0,1].")
+    cli::cli_abort("{.arg thresh_value} is required: absolute [0,1], density (0,1], p-value (0,1].")
   
   # 1) Correlation
   res <- correlate_matrix(x = x, method = cor_method,
