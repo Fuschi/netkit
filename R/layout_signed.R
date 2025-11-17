@@ -1,41 +1,51 @@
-#' Compute Graph Layout Using Only Positive Edges
+#' Compute a Graph Layout Using Only Positive Edges
 #'
 #' @description
-#' Generates a graph layout by considering only the positively weighted edges of an input graph.
-#' This is useful when visualizing signed graphs where positive interactions (e.g., cooperation, similarity)
-#' are of primary interest. The default layout algorithm is Fruchterman-Reingold, but any `igraph` layout
-#' function can be passed.
+#' Computes a graph layout by considering only the positively weighted edges
+#' of the input graph. This is useful when visualizing signed networks in which
+#' positive interactions (e.g., cooperation or similarity) are the primary
+#' structure of interest. The default layout algorithm is Fruchterman–Reingold,
+#' but any `igraph` layout specification can be used.
 #'
-#' @param graph An `igraph` object representing a graph (weighted or unweighted).
-#' @param layout A layout specification (default: `with_fr()`). Any layout function from `igraph`
-#'        that can be passed to `layout_()` is accepted.
+#' @param graph An `igraph` or `tbl_graph` object.
+#' @param algorithm A layout specification passed to `igraph::layout_()`,
+#'   such as `igraph::with_fr()` or `igraph::with_kk()`.
+#' @param circular A logical value required for compatibility with `ggraph()`.
+#'   It is ignored by this function.
+#' @param ... Additional arguments passed by `ggraph()`; ignored.
 #'
-#' @details
-#' If the graph is weighted, the function retains only edges with strictly positive weights.
-#' Edges with zero or negative weights are ignored when computing the layout. The returned layout
-#' matrix can be used in standard igraph plotting functions.
-#'
-#' @return A numeric matrix of layout coordinates (2 columns for 2D layouts; 3 columns for 3D).
-#'
-#' @examples
-#' library(igraph)
-#' g <- make_ring(10)
-#' E(g)$weight <- c(1, -1, 1, 1, -1, 1, 1, -1, 1, 1)
-#'
-#' coords <- layout_signed(g)
-#' plot(g, layout = coords)
+#' @return A `data.frame` with columns `x` and `y` (and possibly others),
+#'   suitable for use as a layout object in `ggraph()`.
 #'
 #' @export
-layout_signed <- function(graph, layout = igraph::with_fr()) {
-  if (!inherits(graph, "igraph")) {
-    cli::cli_abort("{.arg graph} must be an igraph object.")
+layout_signed <- function(
+    graph,
+    algorithm = igraph::with_fr(),
+    circular = FALSE,
+    ...
+) {
+  
+  if (inherits(graph, "tbl_graph")) {
+    ig <- tidygraph::as.igraph(graph)
+  } else if (inherits(graph, "igraph")) {
+    ig <- graph
+  } else {
+    cli::cli_abort("{.arg graph} must be an {.cls igraph} or {.cls tbl_graph} object.")
   }
   
-  if (igraph::is_weighted(graph)) {
-    positive_edges <- which(igraph::E(graph)$weight > 0)
-    graph <- igraph::subgraph.edges(graph, eids = positive_edges, delete.vertices = FALSE)
+  # Keep only positive arc if the network is weighted
+  if (igraph::is_weighted(ig)) {
+    positive_edges <- which(igraph::E(ig)$weight > 0)
+    ig <- igraph::subgraph.edges(ig, eids = positive_edges, delete.vertices = FALSE)
   }
   
-  coords <- igraph::layout_(graph, layout)
-  return(coords)
+  # Get the layout with the choosed algorithm
+  coords <- igraph::layout_(ig, algorithm)
+  
+  # Return a data.frame with x,y columns
+  coords <- as.data.frame(coords)
+  names(coords)[1:2] <- c("x", "y")
+  
+  coords
 }
+

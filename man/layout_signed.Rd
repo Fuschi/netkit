@@ -2,36 +2,29 @@
 % Please edit documentation in R/layout_signed.R
 \name{layout_signed}
 \alias{layout_signed}
-\title{Compute Graph Layout Using Only Positive Edges}
+\title{Compute a Graph Layout Using Only Positive Edges}
 \usage{
-layout_signed(graph, layout = igraph::with_fr())
+layout_signed(graph, algorithm = igraph::with_fr(), circular = FALSE, ...)
 }
 \arguments{
-\item{graph}{An \code{igraph} object representing a graph (weighted or unweighted).}
+\item{graph}{An \code{igraph} or \code{tbl_graph} object.}
 
-\item{layout}{A layout specification (default: \code{with_fr()}). Any layout function from \code{igraph}
-that can be passed to \code{layout_()} is accepted.}
+\item{algorithm}{A layout specification passed to \code{igraph::layout_()},
+such as \code{igraph::with_fr()} or \code{igraph::with_kk()}.}
+
+\item{circular}{A logical value required for compatibility with \code{ggraph()}.
+It is ignored by this function.}
+
+\item{...}{Additional arguments passed by \code{ggraph()}; ignored.}
 }
 \value{
-A numeric matrix of layout coordinates (2 columns for 2D layouts; 3 columns for 3D).
+A \code{data.frame} with columns \code{x} and \code{y} (and possibly others),
+suitable for use as a layout object in \code{ggraph()}.
 }
 \description{
-Generates a graph layout by considering only the positively weighted edges of an input graph.
-This is useful when visualizing signed graphs where positive interactions (e.g., cooperation, similarity)
-are of primary interest. The default layout algorithm is Fruchterman-Reingold, but any \code{igraph} layout
-function can be passed.
-}
-\details{
-If the graph is weighted, the function retains only edges with strictly positive weights.
-Edges with zero or negative weights are ignored when computing the layout. The returned layout
-matrix can be used in standard igraph plotting functions.
-}
-\examples{
-library(igraph)
-g <- make_ring(10)
-E(g)$weight <- c(1, -1, 1, 1, -1, 1, 1, -1, 1, 1)
-
-coords <- layout_signed(g)
-plot(g, layout = coords)
-
+Computes a graph layout by considering only the positively weighted edges
+of the input graph. This is useful when visualizing signed networks in which
+positive interactions (e.g., cooperation or similarity) are the primary
+structure of interest. The default layout algorithm is Fruchterman–Reingold,
+but any \code{igraph} layout specification can be used.
 }
