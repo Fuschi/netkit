@@ -95,6 +95,8 @@ correlate_matrix <- function(
 # Thresholds
 # =========================
 
+# ABSOLUTE
+#------------------------------------------------------------------------------#
 #' @title Threshold correlation matrix by absolute value
 #' @description
 #' Build an adjacency matrix by applying a minimum absolute correlation cutoff.
@@ -119,8 +121,8 @@ threshold_absolute <- function(cor_mat, min_cor) {
   adj
 }
 
-
-
+# DENSITY
+#------------------------------------------------------------------------------#
 #' @title Threshold correlation matrix to achieve target edge density
 #' @description
 #' Keep the largest absolute correlations until the desired undirected edge density is reached.
@@ -162,7 +164,8 @@ threshold_density <- function(cor_mat, density) {
   adj
 }
 
-
+# P-VALUE
+#------------------------------------------------------------------------------#
 #' @title Threshold by p-value significance
 #' @description
 #' Build a (0/1) adjacency mask from a p-value matrix after multiple testing correction.
@@ -209,6 +212,61 @@ threshold_pvalue <- function(pval_mat, alpha = 0.05,
   adj <- adj + t(adj)
   diag(adj) <- 0
   dimnames(adj) <- dimnames(pval_mat)
+  adj
+}
+
+# ABSOLUTE & P-VALUE
+#------------------------------------------------------------------------------#
+#' @title Threshold by absolute correlation AND p-value
+#' @description
+#' Keep edges where both conditions hold:
+#'   - |correlation| >= min_cor
+#'   - adjusted p-value <= alpha
+#'
+#' @param cor_mat Numeric symmetric correlation matrix.
+#' @param pval_mat Numeric symmetric p-value matrix (same dimnames as cor_mat).
+#' @param min_cor Minimum absolute correlation (in \[0, 1\]).
+#' @param alpha Significance level for p-values (in (0, 1]).
+#' @param adjust P-value adjustment method: one of "none", "holm", "hochberg",
+#'   "hommel", "bonferroni", "BH", "BY", "fdr".
+#'
+#' @return Numeric symmetric adjacency matrix with retained correlations as weights.
+#' @export
+threshold_abs_pvalue <- function(cor_mat, pval_mat,
+                                 min_cor,
+                                 alpha  = 0.01,
+                                 adjust = c("none", "holm", "hochberg", "hommel",
+                                            "bonferroni", "BH", "BY", "fdr")) {
+  adjust <- match.arg(adjust)
+  
+  if (!is.matrix(cor_mat)) cli::cli_abort("{.arg cor_mat} must be a matrix.")
+  if (!is.matrix(pval_mat)) cli::cli_abort("{.arg pval_mat} must be a matrix.")
+  if (!is.numeric(cor_mat)) cli::cli_abort("{.arg cor_mat} must be numeric.")
+  if (!is.numeric(pval_mat)) cli::cli_abort("{.arg pval_mat} must be numeric.")
+  if (!isSymmetric(cor_mat)) cli::cli_abort("{.arg cor_mat} must be symmetric.")
+  if (!isSymmetric(pval_mat)) cli::cli_abort("{.arg pval_mat} must be symmetric.")
+  if (!all(dim(cor_mat) == dim(pval_mat)))
+    cli::cli_abort("{.arg cor_mat} and {.arg pval_mat} must have the same dimensions.")
+  if (!identical(rownames(cor_mat), rownames(pval_mat)) ||
+      !identical(colnames(cor_mat), colnames(pval_mat)))
+    cli::cli_abort("{.arg cor_mat} and {.arg pval_mat} must have the same dimnames.")
+  
+  if (!is.numeric(min_cor) || length(min_cor) != 1 || min_cor < 0 || min_cor > 1)
+    cli::cli_abort("{.arg min_cor} must be a number in [0, 1].")
+  if (!is.numeric(alpha) || length(alpha) != 1 || alpha <= 0 || alpha > 1)
+    cli::cli_abort("{.arg alpha} must be a number in (0, 1].")
+  
+  # 1) p-value mask (0/1), già con correzione multipla
+  p_mask <- threshold_pvalue(pval_mat, alpha = alpha, adjust = adjust)
+  
+  # 2) correlation mask: |r| >= min_cor
+  cor_mask <- abs(cor_mat) >= min_cor & !is.na(cor_mat)
+  
+  # 3) combined mask: both conditions
+  mask <- (p_mask > 0) & cor_mask
+  
+  adj <- cor_mat * mask
+  diag(adj) <- 0
   adj
 }
 
@@ -354,4 +412,63 @@ build_corr_net <- function(x,
 }
 
 
-
+#' @title Build correlation network with |cor| and p-value thresholds
+#'
+#' @description
+#' High-level wrapper that:
+#'   1) computes pairwise correlations and p-values;
+#'   2) keeps edges with |cor| >= min_cor AND adjusted p-value <= alpha;
+#'   3) converts the resulting adjacency matrix into an igraph object.
+#'
+#' @param x Numeric matrix or data.frame (samples in rows, variables in columns).
+#' @param cor_method Correlation method: "pearson", "spearman", or "kendall".
+#' @param min_cor Minimum absolute correlation to retain an edge (in \[0, 1\]).
+#' @param alpha Significance level for p-values (in (0, 1\]).
+#' @param adjust P-value adjustment method (see \code{threshold_abs_pvalue}).
+#' @param output "graph", "adjacency", or "both".
+#'
+#' @return Depending on \code{output}:
+#'   - "graph": an igraph object;
+#'   - "adjacency": numeric adjacency matrix;
+#'   - "both": list with elements \code{adjacency} and \code{graph}.
+#'
+#' @export
+build_corr_net_abs_p <- function(x,
+                                 cor_method = c("pearson", "spearman", "kendall"),
+                                 min_cor,
+                                 alpha  = 0.01,
+                                 adjust = c("none", "holm", "hochberg", "hommel",
+                                            "bonferroni", "BH", "BY", "fdr"),
+                                 output = c("graph", "adjacency", "both")) {
+  cor_method <- match.arg(cor_method)
+  adjust     <- match.arg(adjust)
+  output     <- match.arg(output)
+  
+  if (!is.matrix(x)) x <- as.matrix(x)
+  if (!is.numeric(x)) cli::cli_abort("{.arg x} must be a numeric matrix or data.frame.")
+  if (is.null(colnames(x))) cli::cli_abort("{.arg x} must have column names (variables/features).")
+  if (missing(min_cor))
+    cli::cli_abort("{.arg min_cor} is required and must be in [0, 1].")
+  
+  # 1) correlations + p-values
+  res <- correlate_matrix(x = x, method = cor_method, what = "cor_p")
+  
+  # 2) combined threshold
+  adj <- threshold_abs_pvalue(
+    cor_mat = res$cor,
+    pval_mat = res$p,
+    min_cor = min_cor,
+    alpha = alpha,
+    adjust = adjust
+  )
+  
+  # 3) output
+  graph <- adjacency_to_graph(adj, weighted = TRUE)
+  
+  switch(
+    output,
+    "graph"     = graph,
+    "adjacency" = adj,
+    "both"      = list(adjacency = adj, graph = graph)
+  )
+}
