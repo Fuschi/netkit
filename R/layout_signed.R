@@ -36,7 +36,7 @@ layout_signed <- function(
   # Keep only positive arc if the network is weighted
   if (igraph::is_weighted(ig)) {
     positive_edges <- which(igraph::E(ig)$weight > 0)
-    ig <- igraph::subgraph.edges(ig, eids = positive_edges, delete.vertices = FALSE)
+    ig <- igraph::subgraph_from_edges(ig, eids = positive_edges, delete.vertices = FALSE)
   }
   
   # Get the layout with the choosed algorithm
@@ -48,4 +48,3 @@ layout_signed <- function(
   
   coords
 }
-

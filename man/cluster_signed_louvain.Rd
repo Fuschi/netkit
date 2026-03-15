@@ -58,8 +58,9 @@ The required executables must be present in the \code{exec/} directory of the pa
 \item \code{gomez_modularity_opt_Windows.exe} — Windows version
 }
 
-At runtime, they are automatically located using:
-\code{system.file("exec", package = "netkit")}
+At runtime, the wrapper first looks in the installed package
+\code{exec/} directory and then falls back to the repository-local
+\code{exec/} directory when the function is sourced from the project.
 
 Each executable must support the following command-line interface:
 \preformatted{
@@ -73,8 +74,9 @@ and automatically deleted after execution.
 \section{Executables}{
 
 The external binaries are distributed under the package’s \code{exec/} directory.
-Ensure they are executable (use \code{chmod +x} on Unix-like systems).
-These files are not compiled by R; they must be pre-built for each OS.
+On Unix-like systems the wrapper attempts to make the selected executable
+runnable if execute permissions are missing. These files are not compiled by R;
+they must be pre-built for each OS.
 }
 
 \examples{
