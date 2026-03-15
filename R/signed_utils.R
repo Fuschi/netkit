@@ -286,6 +286,18 @@ threshold_signed <- function(
   list(matrix = cov_mat, fit = fit)
 }
 
+#' Emit a Progress Message When Verbose Mode Is Enabled
+#'
+#' @param message Message text.
+#' @param verbose Logical flag controlling message emission.
+#'
+#' @return Called for side effects only.
+#' @keywords internal
+#' @noRd
+.verbose_inform <- function(message, verbose = FALSE) {
+  if (isTRUE(verbose)) cli::cli_inform(message)
+}
+
 #' Apply Multiple Threshold Criteria by Intersection
 #'
 #' @param matrix A square symmetric signed association matrix.
@@ -379,5 +391,250 @@ threshold_signed <- function(
     problematic = problematic,
     rank = rank,
     rcond = reciprocal_condition
+  )
+}
+
+#' Convert a Precision Matrix to Partial Correlations
+#'
+#' @param precision Precision matrix.
+#' @param vars Variable names.
+#'
+#' @return A symmetric partial-correlation matrix.
+#' @keywords internal
+#' @noRd
+.precision_to_partial <- function(precision, vars = colnames(precision)) {
+  scale <- sqrt(diag(precision))
+  partial <- -precision / outer(scale, scale)
+  partial <- (partial + t(partial)) / 2
+  diag(partial) <- 1
+  dimnames(partial) <- list(vars, vars)
+  partial
+}
+
+#' Estimate the Covariance Matrix Used by Partial Reconstruction
+#'
+#' @param x Prepared numeric feature matrix.
+#' @param covariance_estimator One of `"sample"`, `"shrinkage"`, or `"auto"`.
+#' @param shrinkage_args Named list forwarded to [corpcor::cov.shrink()].
+#' @param warn Logical; if `TRUE`, emit warnings for automatic fallback.
+#'
+#' @return A list with covariance diagnostics and the covariance matrix used downstream.
+#' @keywords internal
+#' @noRd
+.estimate_partial_covariance <- function(
+    x,
+    covariance_estimator = c("sample", "shrinkage", "auto"),
+    shrinkage_args = list(),
+    warn = TRUE
+) {
+  covariance_estimator <- match.arg(covariance_estimator)
+  sample_covariance <- stats::cov(x, use = "pairwise.complete.obs")
+  sample_check <- .check_covariance_matrix(sample_covariance)
+
+  if (identical(covariance_estimator, "sample")) {
+    if (sample_check$problematic) {
+      cli::cli_abort(c(
+        "Covariance matrix is singular or poorly conditioned.",
+        "i" = "rank = {sample_check$rank}, reciprocal condition number = {signif(sample_check$rcond, 3)}",
+        "i" = "Use {.arg covariance_estimator = \"shrinkage\"} or {.arg covariance_estimator = \"auto\"}."
+      ))
+    }
+
+    return(list(
+      covariance = sample_covariance,
+      estimator_requested = covariance_estimator,
+      estimator_used = "sample",
+      sample_rank = sample_check$rank,
+      sample_rcond = sample_check$rcond,
+      covariance_rank = sample_check$rank,
+      covariance_rcond = sample_check$rcond,
+      shrinkage_fit = NULL
+    ))
+  }
+
+  if (identical(covariance_estimator, "auto") && !sample_check$problematic) {
+    return(list(
+      covariance = sample_covariance,
+      estimator_requested = covariance_estimator,
+      estimator_used = "sample",
+      sample_rank = sample_check$rank,
+      sample_rcond = sample_check$rcond,
+      covariance_rank = sample_check$rank,
+      covariance_rcond = sample_check$rcond,
+      shrinkage_fit = NULL
+    ))
+  }
+
+  if (identical(covariance_estimator, "auto") && sample_check$problematic && warn) {
+    cli::cli_warn(c(
+      "Covariance matrix is singular or poorly conditioned; regularizing before partial reconstruction.",
+      "i" = "rank = {sample_check$rank}, reciprocal condition number = {signif(sample_check$rcond, 3)}"
+    ))
+  }
+
+  shrinkage_estimate <- .estimate_shrinkage_covariance(x, shrinkage_args)
+  shrinkage_check <- .check_covariance_matrix(shrinkage_estimate$matrix)
+
+  list(
+    covariance = shrinkage_estimate$matrix,
+    estimator_requested = covariance_estimator,
+    estimator_used = if (identical(covariance_estimator, "auto")) "shrinkage_fallback" else "shrinkage",
+    sample_rank = sample_check$rank,
+    sample_rcond = sample_check$rcond,
+    covariance_rank = shrinkage_check$rank,
+    covariance_rcond = shrinkage_check$rcond,
+    shrinkage_fit = shrinkage_estimate$fit
+  )
+}
+
+#' Build a Default Lambda Path for Partial Reconstruction
+#'
+#' @param covariance Covariance matrix used by graphical lasso.
+#' @param nlambda Number of lambda values.
+#' @param lambda_min_ratio Ratio between the smallest and largest lambda.
+#'
+#' @return A decreasing numeric lambda path.
+#' @keywords internal
+#' @noRd
+.default_lambda_path <- function(covariance, nlambda = 20, lambda_min_ratio = 0.01) {
+  if (!is.numeric(nlambda) || length(nlambda) != 1 || nlambda < 2) {
+    cli::cli_abort("{.arg nlambda} must be a single numeric value >= 2.")
+  }
+  if (!is.numeric(lambda_min_ratio) || length(lambda_min_ratio) != 1 || lambda_min_ratio <= 0 || lambda_min_ratio > 1) {
+    cli::cli_abort("{.arg lambda_min_ratio} must be a single numeric value in (0, 1].")
+  }
+
+  upper <- upper.tri(covariance)
+  lambda_max <- max(abs(covariance[upper]), na.rm = TRUE)
+  if (!is.finite(lambda_max) || lambda_max <= 0) lambda_max <- 1
+
+  exp(seq(log(lambda_max), log(lambda_max * lambda_min_ratio), length.out = nlambda))
+}
+
+#' Fit a Graphical Lasso Partial Model
+#'
+#' @param covariance Covariance matrix used for graphical lasso.
+#' @param lambda Penalty value passed as `rho`.
+#' @param glasso_args Named list forwarded to [glasso::glasso()].
+#'
+#' @return A list containing the glasso fit and the partial-correlation matrix.
+#' @keywords internal
+#' @noRd
+.fit_partial_glasso <- function(covariance, lambda, glasso_args = list()) {
+  glasso_args <- .coerce_named_list(glasso_args, "glasso_args")
+  .validate_forward_args(
+    glasso_args,
+    allowed = c("nobs", "zero", "thr", "maxit", "approx", "penalize.diagonal", "start", "w.init", "wi.init", "trace"),
+    arg = "glasso_args"
+  )
+  if ("rho" %in% names(glasso_args)) {
+    cli::cli_abort("{.arg glasso_args} must not contain {.val rho}; use {.arg lambda} instead.")
+  }
+  if (!is.numeric(lambda) || length(lambda) != 1 || !is.finite(lambda) || lambda < 0) {
+    cli::cli_abort("{.arg lambda} must be a single finite numeric value >= 0.")
+  }
+
+  fit <- do.call(glasso::glasso, utils::modifyList(list(s = covariance, rho = lambda), glasso_args))
+  partial <- .precision_to_partial(fit$wi, colnames(covariance))
+  diag(partial) <- 0
+
+  list(fit = fit, matrix = partial)
+}
+
+#' Build a Glasso Support Path for Pulsar/StARS
+#'
+#' @param data Feature matrix.
+#' @param lambda Lambda path.
+#' @param transform One of `"none"` or `"rank"`.
+#' @param covariance_estimator One of `"sample"`, `"shrinkage"`, or `"auto"`.
+#' @param shrinkage_args Named list forwarded to [corpcor::cov.shrink()].
+#' @param glasso_args Named list forwarded to [glasso::glasso()].
+#'
+#' @return A list with a `path` element containing support matrices.
+#' @keywords internal
+#' @noRd
+.partial_glasso_path <- function(
+    data,
+    lambda,
+    transform = c("none", "rank"),
+    covariance_estimator = c("sample", "shrinkage", "auto"),
+    shrinkage_args = list(),
+    glasso_args = list()
+) {
+  transform <- match.arg(transform)
+  covariance_estimator <- match.arg(covariance_estimator)
+  data <- .validate_input_matrix(data)
+  x_prepared <- .prepare_matrix(data, corr_method = if (identical(transform, "rank")) "spearman" else "pearson")
+  cov_estimate <- .estimate_partial_covariance(
+    x_prepared,
+    covariance_estimator = covariance_estimator,
+    shrinkage_args = shrinkage_args,
+    warn = FALSE
+  )
+
+  path <- lapply(lambda, function(rho) {
+    fit <- .fit_partial_glasso(cov_estimate$covariance, rho, glasso_args = glasso_args)
+    storage.mode(fit$matrix) <- "numeric"
+    (fit$matrix != 0) * 1
+  })
+
+  list(path = path)
+}
+
+#' Run StARS Selection for the Partial Reconstruction Path
+#'
+#' @param x Prepared feature matrix.
+#' @param lambda Lambda path.
+#' @param transform One of `"none"` or `"rank"`.
+#' @param covariance_estimator One of `"sample"`, `"shrinkage"`, or `"auto"`.
+#' @param shrinkage_args Named list forwarded to [corpcor::cov.shrink()].
+#' @param glasso_args Named list forwarded to [glasso::glasso()].
+#' @param rep_num Number of subsamples used by StARS.
+#' @param stars_thresh StARS instability threshold.
+#' @param subsample_ratio Optional subsampling ratio.
+#' @param seed Optional random seed.
+#'
+#' @return A list with the pulsar fit, selected lambda, lambda path, and selected index.
+#' @keywords internal
+#' @noRd
+.run_partial_stars <- function(
+    x,
+    lambda,
+    transform = c("none", "rank"),
+    covariance_estimator = c("sample", "shrinkage", "auto"),
+    shrinkage_args = list(),
+    glasso_args = list(),
+    rep_num = 20,
+    stars_thresh = 0.1,
+    subsample_ratio = NULL,
+    seed = NULL
+) {
+  transform <- match.arg(transform)
+  covariance_estimator <- match.arg(covariance_estimator)
+  pulsar_fit <- pulsar::pulsar(
+    data = x,
+    fun = .partial_glasso_path,
+    fargs = list(
+      lambda = lambda,
+      transform = transform,
+      covariance_estimator = covariance_estimator,
+      shrinkage_args = shrinkage_args,
+      glasso_args = glasso_args
+    ),
+    criterion = "stars",
+    thresh = stars_thresh,
+    subsample.ratio = subsample_ratio,
+    rep.num = rep_num,
+    seed = seed,
+    refit = FALSE
+  )
+
+  selected_index <- pulsar_fit$stars$opt.index
+  list(
+    pulsar = pulsar_fit,
+    stars = pulsar_fit$stars,
+    lambda = lambda,
+    selected_index = selected_index,
+    selected_lambda = lambda[selected_index]
   )
 }
