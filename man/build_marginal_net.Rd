@@ -8,6 +8,7 @@ build_marginal_net(
   x,
   corr_method = c("pearson", "spearman"),
   covariance_estimator = c("sample", "shrinkage", "auto"),
+  covariance_check = c("auto", "always", "never"),
   shrinkage_args = list(),
   threshold_method = c("none", "absolute", "density", "pvalue"),
   threshold_value = NULL,
@@ -24,6 +25,11 @@ build_marginal_net(
 sample correlation, \code{"shrinkage"} for shrinkage correlation, or \code{"auto"} to
 start from the sample estimator and regularize automatically when the
 covariance matrix is problematic.}
+
+\item{covariance_check}{Control whether the covariance matrix is checked for
+singularity or poor conditioning. Use \code{"always"} to always perform the check,
+\code{"never"} to skip it, or \code{"auto"} to check only when needed for warnings or
+automatic fallback selection.}
 
 \item{shrinkage_args}{Optional named list or named vector of arguments forwarded to
 \code{\link[corpcor:cov.shrink]{corpcor::cor.shrink()}}. Supported entries are \code{lambda}, \code{w}, and \code{verbose}.}
@@ -45,8 +51,9 @@ Depending on \code{output}, a signed graph, matrix, adjacency, or a detail list.
 \description{
 Reconstruct a signed marginal association matrix, optionally
 apply thresholding, and return it as a matrix and/or graph. When
-\code{covariance_estimator = "sample"}, a singular or badly conditioned covariance
-matrix triggers a warning. When \code{covariance_estimator = "auto"}, the function
+\code{covariance_estimator = "sample"} and covariance checking is enabled, a singular
+or badly conditioned covariance matrix triggers a warning. When
+\code{covariance_estimator = "auto"} and covariance checking is enabled, the function
 warns and switches to shrinkage correlation instead.
 }
 \section{Shrinkage Covariance Estimation}{
